@@ -1,0 +1,130 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ================= ENUMS =================
+// Usar enums en PostgreSQL optimiza las consultas y evita errores de escritura
+
+enum RolUsuario {
+  ADMIN
+  CAJERO
+}
+
+enum TipoDocumento {
+  DNI
+  RUC
+  SIN_DOCUMENTO // Para ventas rápidas al paso
+}
+
+enum EstadoVenta {
+  COMPLETADA
+  ANULADA // Si el cliente devuelve el producto o hay un error
+}
+
+// TABLAS
+
+model Usuario {
+  id        Int        @id @default(autoincrement())
+  nombre    String
+  usuario   String     @unique // El "username" para el login
+  password  String // Aquí guardarás el hash (usando bcrypt en NestJS)
+  rol       RolUsuario @default(CAJERO)
+  activo    Boolean    @default(true)
+  ventas    Venta[] // Relación: Un usuario (cajero) hace muchas ventas
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+}
+
+model Categoria {
+  id        Int        @id @default(autoincrement())
+  nombre    String     @unique // Ej: Analgésicos, Antibióticos
+  productos Producto[]
+}
+
+model Producto {
+  id          Int        @id @default(autoincrement())
+  codigo      String     @unique // Código de barras o manual para buscar rápido
+  nombre      String
+  categoriaId Int?
+  categoria   Categoria? @relation(fields: [categoriaId], references: [id])
+
+  // Lógica de Precios
+  porcentajeGanancia Decimal @db.Decimal(5, 2) // Ej: 30.00 para 30%
+  precioVentaActual  Decimal @db.Decimal(10, 2) // Se actualiza solo cuando llega un lote nuevo
+
+  stockMinimo Int     @default(10) // Tu regla de negocio para la alerta
+  activo      Boolean @default(true)
+
+  lotes         Lote[]
+  detallesVenta DetalleVenta[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Lote {
+  id         Int      @id @default(autoincrement())
+  productoId Int
+  producto   Producto @relation(fields: [productoId], references: [id])
+  codigoLote String? // Opcional: El lote físico que viene impreso en la caja
+
+  // Datos financieros y de stock
+  precioCompra    Decimal @db.Decimal(10, 2) // Lo que te costó a ti
+  cantidadInicial Int // Cuántos llegaron
+  stockActual     Int // Cuántos quedan (Se resta con cada venta)
+
+  // Fechas críticas
+  fechaIngreso     DateTime @default(now())
+  fechaVencimiento DateTime // Obligatorio para farmacias
+
+  activo Boolean @default(true)
+}
+
+model Cliente {
+  id              Int           @id @default(autoincrement())
+  tipoDocumento   TipoDocumento @default(SIN_DOCUMENTO)
+  numeroDocumento String?       @unique // DNI o RUC
+  nombreRazon     String // "Juan Perez" o "Empresa SAC"
+  direccion       String? // Opcional, lo devuelve la API de RUC a veces
+  ventas          Venta[]
+  createdAt       DateTime      @default(now())
+}
+
+model Venta {
+  id Int @id @default(autoincrement())
+
+  // ¿Quién vendió?
+  usuarioId Int
+  usuario   Usuario @relation(fields: [usuarioId], references: [id])
+
+  // ¿A quién se le vendió? (Opcional)
+  clienteId Int?
+  cliente   Cliente? @relation(fields: [clienteId], references: [id])
+
+  // Totales
+  total      Decimal     @db.Decimal(10, 2)
+  estado     EstadoVenta @default(COMPLETADA)
+  fechaVenta DateTime    @default(now())
+
+  // Detalle de los productos
+  detalles DetalleVenta[]
+}
+
+model DetalleVenta {
+  id      Int   @id @default(autoincrement())
+  ventaId Int
+  venta   Venta @relation(fields: [ventaId], references: [id])
+
+  productoId Int
+  producto   Producto @relation(fields: [productoId], references: [id])
+
+  cantidad Int
+
+  // el precio al que se vendió ESE DÍA
+  precioUnitario Decimal @db.Decimal(10, 2)
+  subtotal       Decimal @db.Decimal(10, 2) // cantidad * precioUnitario
+}
