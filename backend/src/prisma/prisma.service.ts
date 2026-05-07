@@ -8,12 +8,10 @@ export class PrismaService
   extends PrismaClient
   implements OnModuleInit, OnModuleDestroy
 {
-
   constructor() {
-
     const connectionString = process.env.DATABASE_URL;
 
-    if (!connectionString){
+    if (!connectionString) {
       throw new Error('Missing database connection string');
     }
 
