@@ -4,15 +4,21 @@ import { useAuthStore } from '../store/authStore';
 import { LogOut, Search, ShoppingCart, User as UserIcon, Plus, Minus, Trash2, ChartBar, Package, Users } from 'lucide-react';
 import toast from 'react-hot-toast';
 import jsPDF from 'jspdf';
-import autoTable from 'jspdf-autotable'; // <-- IMPORTACIÓN CORREGIDA PARA VITE
+import autoTable from 'jspdf-autotable';
 import api from '../api/axios';
 import CobroModal from '../components/CobroModal';
+
+interface Lote {
+    stockActual: number;
+}
 
 interface Producto {
     id: number;
     codigo: string;
     nombre: string;
     precioVentaActual: number;
+    stockMinimo: number;
+    lotes: Lote[];
 }
 
 interface ItemCarrito extends Producto {
@@ -52,9 +58,21 @@ export default function Dashboard() {
     }, [productos, busqueda]);
 
     const agregarAlCarrito = (producto: Producto) => {
+        const stockTotal = producto.lotes?.reduce((acc, lote) => acc + lote.stockActual, 0) || 0;
+
+        if (stockTotal <= 0) {
+            toast.error(`"${producto.nombre}" está agotado (Stock 0).`);
+            return;
+        }
+
         setCarrito((prev) => {
             const existe = prev.find((item) => item.id === producto.id);
             if (existe) {
+                if (existe.cantidad + 1 > stockTotal) {
+                    toast.error(`Solo hay ${stockTotal} unidades de "${producto.nombre}" en stock.`);
+                    return prev;
+                }
+
                 return prev.map((item) =>
                     item.id === producto.id
                         ? { ...item, cantidad: item.cantidad + 1, subtotal: (item.cantidad + 1) * Number(item.precioVentaActual) }
@@ -69,6 +87,12 @@ export default function Dashboard() {
         setCarrito((prev) => {
             return prev.map((item) => {
                 if (item.id === id) {
+                    const stockTotal = item.lotes?.reduce((acc, lote) => acc + lote.stockActual, 0) || 0;
+                    if (delta > 0 && item.cantidad + delta > stockTotal) {
+                        toast.error(`Límite de stock alcanzado (${stockTotal} unidades).`);
+                        return item;
+                    }
+
                     const nuevaCantidad = item.cantidad + delta;
                     if (nuevaCantidad <= 0) return null;
                     return {
@@ -84,7 +108,6 @@ export default function Dashboard() {
 
     const totalAPagar = carrito.reduce((suma, item) => suma + item.subtotal, 0);
 
-    // LOGICA DEL PDF CORREGIDA
     const generarTicketPDF = (clienteNombre: string) => {
         const doc = new jsPDF({
             orientation: 'portrait',
@@ -92,7 +115,6 @@ export default function Dashboard() {
             format: [80, 250]
         });
 
-        // Cabecera
         doc.setFontSize(14);
         doc.setFont('helvetica', 'bold');
         doc.text('NOVA SALUD POS', 40, 10, { align: 'center' });
@@ -104,7 +126,6 @@ export default function Dashboard() {
 
         doc.text('--------------------------------------------------', 40, 24, { align: 'center' });
 
-        // Datos Venta
         doc.text(`Fecha: ${new Date().toLocaleString('es-PE')}`, 5, 29);
         doc.text(`Cajero: ${user?.nombre || 'Admin'}`, 5, 33);
         doc.text(`Cliente: ${clienteNombre}`, 5, 37);
@@ -115,7 +136,6 @@ export default function Dashboard() {
             item.subtotal.toFixed(2)
         ]);
 
-        // USO CORRECTO DE AUTOTABLE PARA VITE
         autoTable(doc, {
             startY: 42,
             head: [['Cant', 'Descrip', 'Total']],
@@ -154,16 +174,13 @@ export default function Dashboard() {
                 cantidad: item.cantidad
             }));
 
-            // 1. Guardar en Base de Datos
             await api.post('/ventas', {
                 clienteId: clienteId,
                 detalles: detallesVenta
             });
 
-            // 2. Imprimir el Ticket
             generarTicketPDF(clienteNombre);
 
-            // 3. Limpiar y notificar
             setModalAbierto(false);
             setCarrito([]);
             toast.success("¡Venta exitosa! Generando ticket...");
@@ -173,7 +190,6 @@ export default function Dashboard() {
 
         } catch (error: any) {
             console.error("Error al procesar la venta:", error);
-            // Si el error es del backend, mostramos su mensaje. Si es del PDF, mostramos un error genérico.
             const mensajeError = error.response?.data?.message || "Error interno al generar la venta o el PDF";
             toast.error(mensajeError);
         }
@@ -189,32 +205,37 @@ export default function Dashboard() {
                     <h1 className="text-xl font-bold text-slate-800">Nova Salud POS</h1>
                 </div>
                 <div className="flex items-center gap-4">
+
                     <div className="flex gap-2">
-                        <button
-                            onClick={() => navigate('/inventario')}
-                            className="flex items-center gap-2 text-slate-600 hover:bg-slate-100 px-3 py-2 rounded-lg transition-colors font-medium border border-slate-200"
-                        >
-                            <Package size={18} />
-                            <span>Inventario</span>
-                        </button>
-                        <button
-                            onClick={() => navigate('/historial')}
-                            className="flex items-center gap-2 text-slate-600 hover:bg-slate-100 px-3 py-2 rounded-lg transition-colors font-medium border border-slate-200"
-                        >
-                            <ChartBar size={18} />
-                            <span>Historial</span>
-                        </button>
                         {user?.rol === 'ADMIN' && (
-                            <button
-                                onClick={() => navigate('/usuarios')}
-                                className="flex items-center gap-2 text-purple-700 bg-purple-50 hover:bg-purple-100 px-3 py-2 rounded-lg transition-colors font-medium border border-purple-200"
-                            >
-                                <Users size={18} />
-                                <span>Usuarios</span>
-                            </button>
+                            <>
+                                <button
+                                    onClick={() => navigate('/inventario')}
+                                    className="flex items-center gap-2 text-slate-600 hover:bg-slate-100 px-3 py-2 rounded-lg transition-colors font-medium border border-slate-200"
+                                >
+                                    <Package size={18} />
+                                    <span>Inventario</span>
+                                </button>
+                                <button
+                                    onClick={() => navigate('/historial')}
+                                    className="flex items-center gap-2 text-slate-600 hover:bg-slate-100 px-3 py-2 rounded-lg transition-colors font-medium border border-slate-200"
+                                >
+                                    <ChartBar size={18} />
+                                    <span>Historial</span>
+                                </button>
+                                <button
+                                    onClick={() => navigate('/usuarios')}
+                                    className="flex items-center gap-2 text-purple-700 bg-purple-50 hover:bg-purple-100 px-3 py-2 rounded-lg transition-colors font-medium border border-purple-200"
+                                >
+                                    <Users size={18} />
+                                    <span>Usuarios</span>
+                                </button>
+                            </>
                         )}
                     </div>
+
                     <div className="h-6 w-px bg-slate-300 mx-1"></div>
+
                     <div className="flex items-center gap-2 text-slate-600">
                         <UserIcon size={18} />
                         <span className="font-medium">{user?.nombre}</span>
@@ -231,7 +252,7 @@ export default function Dashboard() {
 
             <main className="flex-1 flex overflow-hidden p-4 gap-4">
                 <section className="w-2/3 bg-white rounded-xl shadow-sm flex flex-col overflow-hidden">
-                    <div className="p-4 border-b">
+                    <div className="p-4 border-b bg-white z-10">
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
                             <input
@@ -243,30 +264,58 @@ export default function Dashboard() {
                             />
                         </div>
                     </div>
-                    <div className="flex-1 overflow-y-auto p-4">
+
+                    {/* AQUÍ ESTÁ EL FONDO MÁS OSCURITO (bg-slate-50 y shadow-inner) PARA RESALTAR LAS TARJETAS */}
+                    <div className="flex-1 overflow-y-auto p-5 bg-slate-50 shadow-inner">
                         {productosFiltrados.length === 0 ? (
                             <div className="h-full flex items-center justify-center text-slate-400">
                                 No se encontraron medicamentos.
                             </div>
                         ) : (
-                            <div className="grid grid-cols-3 gap-4">
-                                {productosFiltrados.map((prod) => (
-                                    <button
-                                        key={prod.id}
-                                        onClick={() => agregarAlCarrito(prod)}
-                                        className="bg-white border border-slate-200 p-4 rounded-xl hover:border-blue-500 hover:shadow-md transition-all text-left flex flex-col justify-between h-32 group"
-                                    >
-                                        <div>
-                                            <span className="text-xs text-slate-400 block mb-1">{prod.codigo}</span>
-                                            <h3 className="font-semibold text-slate-800 line-clamp-2 leading-tight group-hover:text-blue-700 transition-colors">
-                                                {prod.nombre}
-                                            </h3>
-                                        </div>
-                                        <div className="text-lg font-bold text-blue-600">
-                                            S/ {Number(prod.precioVentaActual).toFixed(2)}
-                                        </div>
-                                    </button>
-                                ))}
+                            <div className="grid grid-cols-3 gap-5">
+                                {productosFiltrados.map((prod) => {
+
+                                    const stockTotal = prod.lotes?.reduce((acc, lote) => acc + lote.stockActual, 0) || 0;
+
+                                    // AQUÍ ESTÁ EL ROJO TINTO/FUERTE (bg-red-700)
+                                    let colorPunto = 'bg-red-700';
+
+                                    if (stockTotal > prod.stockMinimo) {
+                                        colorPunto = 'bg-green-500';
+                                    } else if (stockTotal > 0 && stockTotal <= prod.stockMinimo) {
+                                        colorPunto = 'bg-orange-500';
+                                    }
+
+                                    return (
+                                        <button
+                                            key={prod.id}
+                                            onClick={() => agregarAlCarrito(prod)}
+                                            className={`bg-white border p-4 rounded-xl transition-all text-left flex flex-col justify-between h-32 group relative shadow-sm
+                        ${stockTotal <= 0 ? 'border-red-200 opacity-75' : 'border-slate-200 hover:border-blue-500 hover:shadow-md hover:-translate-y-0.5'}
+                      `}
+                                        >
+                                            <div>
+                                                <span className="text-xs text-slate-400 block mb-1">{prod.codigo}</span>
+                                                <h3 className={`font-semibold line-clamp-2 leading-tight transition-colors 
+                          ${stockTotal <= 0 ? 'text-slate-500' : 'text-slate-800 group-hover:text-blue-700'}
+                        `}>
+                                                    {prod.nombre}
+                                                </h3>
+                                            </div>
+
+                                            <div className="flex justify-between items-end w-full">
+                                                <div className={`text-lg font-bold ${stockTotal <= 0 ? 'text-slate-400' : 'text-blue-600'}`}>
+                                                    S/ {Number(prod.precioVentaActual).toFixed(2)}
+                                                </div>
+
+                                                <div
+                                                    className={`w-3 h-3 rounded-full shadow-sm ${colorPunto}`}
+                                                    title={`Stock: ${stockTotal} | Min: ${prod.stockMinimo}`}
+                                                ></div>
+                                            </div>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>
